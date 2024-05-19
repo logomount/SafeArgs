@@ -1,5 +1,12 @@
 package com.codescape.safeargs.ui.navigation
 
+import android.net.Uri
+import android.os.Build
+import android.os.Build.VERSION.SDK_INT
+import android.os.Build.VERSION_CODES.TIRAMISU
+import android.os.Bundle
+import android.os.Parcelable
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
@@ -44,12 +51,18 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.dropUnlessResumed
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.codescape.safeargs.R
+import kotlinx.parcelize.Parcelize
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlin.reflect.typeOf
 
 /*
 * Images:
@@ -57,19 +70,36 @@ import kotlinx.serialization.Serializable
 * Architecture Corridor Modern by PIRO4D: https://pixabay.com/photos/architecture-corridor-modern-3357028/
 * */
 
+@Serializable
+@Parcelize
 data class Photo(
     val photoRes: Int,
     val photoName: String,
     val photoDesc: String
-)
+) : Parcelable
 
 sealed class Screen {
     @Serializable
     data object Home : Screen()
 
     @Serializable
-    data class Detail(val photoRes: Int, val photoName: String, val photoDesc: String) : Screen()
+    data class Detail(val photo: Photo) : Screen()
 }
+
+val NavType.Companion.PhotoType: NavType<Photo>
+    get() = object : NavType<Photo>(isNullableAllowed = true) {
+
+        override fun get(bundle: Bundle, key: String) =
+            if (SDK_INT < TIRAMISU) bundle.getParcelable(key)
+            else bundle.getParcelable(key, Photo::class.java)
+
+        override fun parseValue(value: String): Photo = Json.decodeFromString(value)
+
+        override fun serializeAsValue(value: Photo): String = Json.encodeToString(value)
+
+        override fun put(bundle: Bundle, key: String, value: Photo) =
+            bundle.putParcelable(key, value)
+    }
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -94,18 +124,14 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     sharedTransitionScope = this@SharedTransitionLayout,
                     animatedContentScope = this@composable,
                     onNavigateToProfile = { photo ->
-                        navController.navigate(
-                            Screen.Detail(
-                                photoRes = photo.photoRes,
-                                photoName = photo.photoName,
-                                photoDesc = photo.photoDesc
-                            )
-                        )
+                        navController.navigate(Screen.Detail(photo = photo))
                     }
                 )
             }
-            composable<Screen.Detail> { backStackEntry ->
-                val photo = backStackEntry.toRoute<Screen.Detail>()
+            composable<Screen.Detail>(
+                typeMap = mapOf(typeOf<Photo>() to NavType.PhotoType)
+            ) { backStackEntry ->
+                val photo = backStackEntry.toRoute<Screen.Detail>().photo
                 ProfileScreen(
                     photoRes = photo.photoRes,
                     photoName = photo.photoName,
@@ -152,7 +178,7 @@ fun HomeScreen(
             val height = with(LocalDensity.current) { result.size.height.toDp() }
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { onNavigateToProfile(photo) }
+                onClick = dropUnlessResumed { onNavigateToProfile(photo) }
             ) {
                 Image(
                     modifier = Modifier
@@ -228,7 +254,7 @@ fun ProfileScreen(
     val scale = remember { Animatable(0f) }
     LaunchedEffect(focused) {
         if (focused) {
-            scale.animateTo(1.5f, tween(150))
+            scale.animateTo(1.25f, tween(150))
         } else {
             scale.animateTo(1f, tween(150))
         }
